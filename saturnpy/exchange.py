@@ -211,7 +211,7 @@ class ExchangeInterface(object):
         txhash = self.sendRawTx(unsignedTX)
         return txhash
 
-    def newEtherTrade(self, amount : int, order):
+    def newEtherTrade(self, amount, order):
         tokenAddress = self.provider.toChecksumAddress(order["selltoken"]["address"])
         exContract = self.provider.toChecksumAddress(order["contract"])
         token = self.provider.eth.contract(address=tokenAddress, abi=erc20)
@@ -234,7 +234,7 @@ class ExchangeInterface(object):
         txhash = self.sendRawTx(unsignedTX)
         return txhash
 
-    def newTrade(self, amount : int, orderTx):
+    def newTrade(self, amount, orderTx):
         order = self.query.awaitOrderTx(orderTx)        
         self.verifyOrderTradable(order)
         orderType = order["type"].lower()
@@ -278,7 +278,7 @@ class ExchangeInterface(object):
         return wait
 
 
-    def newOrder(self, tokenAddress: str, orderType: str, amount: int, price):
+    def newOrder(self, tokenAddress: str, orderType: str, amount, price):
         tokenAddress = self.provider.toChecksumAddress(tokenAddress)
         self.verifyOrderType(orderType.lower())
         tokenType = self.determineTokenType(tokenAddress)
@@ -297,7 +297,7 @@ class ExchangeInterface(object):
         else:
             raise Exception('UNKNOWN ORDERTYPE {}', orderType)
 
-    def newBuyOrder(self, tokenAddress : str, amount : int, price : int, orderContract : str):
+    def newBuyOrder(self, tokenAddress : str, amount, price : int, orderContract : str):
         tokenAddress = self.provider.toChecksumAddress(tokenAddress)
         exContract = self.provider.toChecksumAddress(self.exchangeContractAddress)
         token = self.provider.eth.contract(address=tokenAddress, abi=erc20)
@@ -349,7 +349,7 @@ class ExchangeInterface(object):
         txhash = self.sendRawTx(unsignedTX)
         return txhash
 
-    def newERC20sellOrder(self, tokenAddress : str, amount : int, price : int, orderContract : str):
+    def newERC20sellOrder(self, tokenAddress : str, amount, price : int, orderContract : str):
         tokenAddress = self.provider.toChecksumAddress(tokenAddress)
         orderContract = self.provider.toChecksumAddress(orderContract)        
         exchange = self.provider.eth.contract(address=orderContract, abi = exchangeConfig["abi"])
