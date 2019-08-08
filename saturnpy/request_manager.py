@@ -4,7 +4,7 @@ from statistics import mean
 
 class RequestManager():
     etheraddress = "0x0000000000000000000000000000000000000000"
-    payload = {'Origin': 'saturnjs'}
+    payload = {'Origin': 'saturnpy'}
     def __init__(self, apiurl, provider, wallet, blockchain):
         self.apiurl = apiurl
         self.provider = provider
@@ -144,21 +144,3 @@ class RequestManager():
             raise Exception('ERROR GET URL: {}'.format(url))
         finally:
             return data.json()
-
-"""
-  private pickColor(blockchain: string) : string {
-    let b = blockchain.toUpperCase()
-    if (b == 'ETH') { return 'gray' }
-    if (b == 'ETC') { return 'green'  }
-    throw new Error('Unknown blockchain')
-  }
-
-  private blockchainName(obj: string | Web3Interface ) : string {
-    return obj instanceof Web3Interface ? obj.blockchain : obj
-  }
-
-  private isCLI() : boolean {
-    return !(typeof window !== 'undefined' && typeof window.document !== 'undefined')
-  }
-}
-"""
