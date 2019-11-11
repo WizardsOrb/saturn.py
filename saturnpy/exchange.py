@@ -1,70 +1,79 @@
 #!/usr/bin/env python3
 
-import os, json, requests, math
+# exchange.py Version 0.0.2 by WizardsOrb and PseudoDeterminist, Oct 2019
+
+# This is the well-formed-trades version of Saturnpy. INVALID TRADES WILL NOT BE SENT to the exchange contract.
+
 from fractions import Fraction
-from decimal import *
-from web3 import Web3, HTTPProvider
-from ethereum.utils import encode_int, decode_hex, encode_hex
+import pprint
+import os
+import json
+import requests
 
-absolutePath = os.path.abspath(os.path.dirname(__file__))
+from web3 import Web3
+from .utils import toSbtkn, intVerify, exp_ether_decimals, etheraddress, gaslimit, AbiDecoder, toUint
 
-with open(os.path.join(absolutePath, "erc20.json")) as x:
-    erc20 = json.load(x)
+ABSOLUTEPATH = os.path.abspath(os.path.dirname(__file__))
+with open(os.path.join(ABSOLUTEPATH, "erc20.json")) as x:
+    ERC20 = json.load(x)
 
-with open(os.path.join(absolutePath, "erc223.json")) as x:
-    erc223 = json.load(x)
+with open(os.path.join(ABSOLUTEPATH, "erc223.json")) as x:
+    ERC223 = json.load(x)
 
-with open(os.path.join(absolutePath, "exchangeConfig.json")) as x:
-    exchangeConfig = json.load(x)
+with open(os.path.join(ABSOLUTEPATH, "exchangeConfig.json")) as x:
+    EXCHANGECONFIG = json.load(x)
 
 class ExchangeInterface(object):
-    etheraddress = "0x0000000000000000000000000000000000000000"
-    etherDecimals = 18
-    gaslimit = 400000
-    
-    def __init__(self, provider, wallet, query, blockchain, testmode = False):
+    def __init__(self, provider, wallet, query, blockchain, TESTMODE, SBTKN, STRICT, BNDL, DEBUG):
         self.query = query
-        self.testmode : bool = testmode
-        self.provider : Web3 = provider
+        self.TESTMODE: bool = TESTMODE
+        self.provider: Web3 = provider
         self.wallet = wallet
         self.blockchain = blockchain.lower()
         self.networkId = self.getNetworkId(blockchain)
-        self.exchangeContractAddress = self.provider.toChecksumAddress(exchangeConfig["address"][self.blockchain.upper()])
+        self.exchange_contract_address = self.provider.toChecksumAddress(EXCHANGECONFIG["address"][self.blockchain.upper()])
+        self.decoder = AbiDecoder(self.provider, EXCHANGECONFIG["abi"])
+        self.SBTKN, self.STRICT, self.BNDL, self.DEBUG = SBTKN, STRICT, BNDL, DEBUG
 
-    def getNetworkId(self, blockchain : str = None):
-        if blockchain == None:
+    def getNetworkId(self, blockchain = None):
+        if blockchain is None:
             blockchain = self.blockchain
         blockchain = blockchain.lower()
         if blockchain == "etc":
             return 61
         if blockchain == "eth":
             return 1
-        raise Exception("UNSUPPORTED BLOCKCHAIN:" + str(blockchain))
+        raise Exception(f'UNSUPPORTED BLOCKCHAIN: {blockchain}')
 
-    def getGasPrice(self, blockchain = None):
-        if blockchain == None:
+    def log(self, logstring):
+        if not self.DEBUG:
+            return
+        pprint.pprint(f"DEBUG: {logstring}")
+
+    def getGasPrice(self, blockchain=None):
+        if blockchain is None:
             blockchain = self.blockchain.upper()
         else:
             blockchain = blockchain.upper()
+
         if blockchain == 'ETC':
-            return self.provider.toWei('0.001', 'gwei')        
+            return self.provider.toWei('0.001', 'gwei')
         if blockchain == 'ETH':
-            r = requests.get('https://www.ethgasstationapi.com/api/standard')
-            return self.provider.toWei(str(r.json()), 'gwei')    
-        raise Exception("Unknown blockchain {}".format(blockchain))
+            req = requests.get('https://www.ethgasstationapi.com/api/standard')
+            return self.provider.toWei(str(req.json()), 'gwei')
+        raise Exception(f'Unknown blockchain {blockchain}')
 
-
-    def isERC223(self, address : str):
+    def isERC223(self, address):
         address = self.provider.toChecksumAddress(address)
         code = self.provider.eth.getCode(address)
         return bool(str(code.hex())[2:].find("be45fd62") > -1)
 
-    def isERC20(self, address : str):
+    def isERC20(self, address):
         address = self.provider.toChecksumAddress(address)
         code = self.provider.eth.getCode(address)
         return bool(str(code.hex())[2:].find("095ea7b3") > -1)
-    
-    def determineTokenType(self, address : str):
+
+    def determineTokenType(self, address):
         address = self.provider.toChecksumAddress(address)
         is223 = self.isERC223(address)
         is20 = self.isERC20(address)
@@ -72,346 +81,420 @@ class ExchangeInterface(object):
             return "ERC223"
         if is20 == True:
             return "ERC20"
-        raise Exception("Token {} on ${} is of unknown type".format(address, self.blockchain.upper()))
-    
-    def verifyOrderType(self, orderType : str):
+        raise Exception(f'Token {address} on ${self.blockchain.upper()} is of unknown type')
+
+    def verifyOrderType(self, order_type):
         types = ["buy", "sell"]
-        if orderType not in types:
-            raise Exception("Unknown order type {}".format(orderType))
+        if order_type not in types:
+            raise Exception(f'Unknown order type {order_type}')
 
     def verifyOrderTradable(self, order):
         trader = self.wallet.address
         orderaddr = order["owner"].lower()
         if orderaddr == trader:
-            raise Exception("Cannot trade against your own order!")
-        
+            raise Exception('Cannot trade against your own order!')
+
         if bool(order["active"]) == False:
-            raise Exception("The order {} appears to no longer be active".format(order["transaction"]))
-        
+            raise Exception(f'The order {str(order["transaction"])} appears to no longer be active')
+
         return True
 
-    def verifyAllowance(self, tokenInstance, parsedAmount : Fraction, address: str = None):
-        if address == None:
-            address = self.exchangeContractAddress
-
-        trader = self.wallet.address
-        trader = self.provider.toChecksumAddress(trader)
+    def verifyAllowance(self, token_address, amount, address):
+        token_address = self.provider.toChecksumAddress(token_address)
         address = self.provider.toChecksumAddress(address)
-        allowance = tokenInstance.functions.allowance(trader, address).call()
-        allowFraction = Fraction(Decimal(allowance))
-        if allowFraction <= 0:
-            raise Exception("Insufficient allowance for token {}. Please visit https://forum.saturn.network/t/saturnjs-insufficient-allowance-error/2966 to resolve".format(tokenInstance.address))
+        trader = self.provider.toChecksumAddress(self.wallet.address)
+        token = self.provider.eth.contract(address=token_address, abi=ERC20)
+
+        if address is None:
+            address = self.exchange_contract_address
+
+        allowance = token.functions.allowance(trader, address).call()
+
+        if allowance < amount:
+            raise Exception(f'Insufficient allowance for token {token_address}. Please visit https://forum.saturn.network/t/saturnjs-insufficient-allowance-error/2966 to resolve')
+
         return True
 
     def verifyEtherBalance(self, amount):
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(self.etherDecimals))
         trader = self.wallet.address
-        unparsedBalance = self.provider.eth.getBalance(trader)
-        balance = Fraction(str(unparsedBalance))
-        if parsedAmount > balance:
-            raise Exception("Insufficient ether balance. Requested amount: {}. Available amount: {}".format(amount, unparsedBalance))
+        balance = int(self.provider.eth.getBalance(trader))
+
+        if amount > balance:
+            raise Exception(f'Insufficient wei balance. Requested amount: {amount}. Available amount: {balance}')
         return True
 
-    def verifyTokenBalance(self, tokenAddress : str, amount):
+    def verifyTokenBalance(self, token_address, amount):
         trader = self.wallet.address
-        contractAddr = self.provider.toChecksumAddress(tokenAddress)
-        token = self.provider.eth.contract(address=contractAddr, abi=erc20)
-        balance = Fraction(str(token.functions.balanceOf(trader).call()))
-        decimals = token.functions.decimals().call()
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(decimals))
-        if parsedAmount > balance:
-            raise Exception("Insufficient balance for token {}. Requested amount: {}. Available amount: {}".format(contractAddr, amount, parsedAmount))
+        contract_addr = self.provider.toChecksumAddress(token_address)
+        token = self.provider.eth.contract(address=contract_addr, abi=ERC20)
+
+        balance = int(token.functions.balanceOf(trader).call())
+        if amount > balance:
+            raise Exception(f'Insufficient balance for token {contract_addr}. Requested amount: {amount}. Available amount: {balance}')
         return True
 
     def verifyCapacity(self, amount, order):
+        order_id = int(order["order_id"])
+        order_contract = self.exchange_contract_address
+        token_addr = ""
+        if order["buytoken"]["address"] != etheraddress:
+            token_addr = order["buytoken"]["address"]
+        if order["selltoken"]["address"] != etheraddress:
+            token_addr = order["selltoken"]["address"]
+        token_addr = self.provider.toChecksumAddress(token_addr)
+        token = self.provider.eth.contract(address=token_addr, abi=ERC20)
+        exchange = self.provider.eth.contract(address=order_contract, abi=EXCHANGECONFIG["abi"])
+
+        if not self.SBTKN:
+            exp_decimals = 10 ** int(token.functions.decimals().call())
+            amount = toSbtkn(amount, exp_decimals, self.STRICT)
+
+        amount = intVerify(amount)
+
+        price_obj = self.decoder.getIntegerPrice(order["transaction"])
+        price_mul = int(price_obj["mul"])
+        price_div = int(price_obj["div"])
+
+        order_balance = int(exchange.functions.remainingAmount(order_id).call())
+
         if order["type"] == "BUY":
-            raise Exception("verifyCapacity is only Allowed on Token balances")
-        amount = str(amount)
-        orderId = int(order["order_id"])
-        orderContract = self.exchangeContractAddress
-        contractAddr = ""
-        if order["buytoken"]["address"] != self.etheraddress:
-           contractAddr = order["buytoken"]["address"]
-        if order["selltoken"]["address"] != self.etheraddress:
-           contractAddr = order["selltoken"]["address"]           
-        contractAddr = self.provider.toChecksumAddress(contractAddr)
-        exchange = self.provider.eth.contract(address=orderContract, abi = exchangeConfig["abi"])
-        token = self.provider.eth.contract(address=contractAddr, abi=erc20)
-        decimals = token.functions.decimals().call()
-        rawOrderBalance = int(exchange.functions.remainingAmount(orderId).call())
-        parsedOrderBalance = rawOrderBalance / (10 ** int(decimals))
-        if float(amount) > parsedOrderBalance:
-            raise Exception("You attempted to trade more tokens ({}) than are available in the order ({}) for order_tx {}".format(amount, parsedOrderBalance, order["transaction"]))
-        return parsedOrderBalance
+            nearest_trade = min(amount - amount * price_mul % price_div, order_balance * price_div // price_mul)
+        elif order["type"] == "SELL":
+            nearest_trade = min(amount - amount * price_div % price_mul, order_balance)
+        else:
+            raise Exception(f'Unknown order type for order_tx {order["transaction"]} on ${self.blockchain}')
 
-    def toUint(self, num):
-        return encode_hex(encode_int(num)).rjust(64, '0')
+        if self.STRICT:
+            if amount != nearest_trade:
+                raise Exception(f'Order cannot trade amount {amount}. nearest possible trade: {nearest_trade}')
 
-    def sendRawTx(self, unsignedTX):
-        if self.testmode == True:
-            print(unsignedTX)
+        self.log(f"nearestTrade = {nearest_trade}")
+        self.log(f"amount = {amount}")
+
+        return nearest_trade
+
+    def sendRawTx(self, unsigned_tx):
+        if self.TESTMODE == True:
+            self.log(unsigned_tx)
             return '0x'
 
         try:
-            signedTX = self.wallet.signTransaction(unsignedTX)
-            self.provider.eth.sendRawTransaction(signedTX.rawTransaction)
-            txhash = self.provider.toHex(self.provider.sha3(signedTX.rawTransaction))
-            #print(txhash)
+            signed_tx = self.wallet.signTransaction(unsigned_tx)
+            self.provider.eth.sendRawTransaction(signed_tx.rawTransaction)
+            txhash = self.provider.toHex(self.provider.sha3(signed_tx.rawTransaction))
             return txhash
         except:
             raise Exception('ERROR SENDING RAW TRANSACTION')
 
-
-    def createERC223OrderPayload(self, price : Fraction, buytoken : str):
-        paddedToken = buytoken
-        if buytoken == '0x0' or buytoken.lower() == self.etheraddress:
-            paddedToken = str(self.etheraddress)
-        return '0x' + str(self.toUint(int(price.numerator))) + str(self.toUint(price.denominator)) + paddedToken[2:]
+    def createERC223OrderPayload(self, price_mul, price_div, buytoken):
+        padded_token = buytoken
+        if buytoken == '0x0' or buytoken.lower() == etheraddress:
+            padded_token = str(etheraddress)
+        if (not isinstance(price_mul, int)) or (not isinstance(price_div, int)):
+            raise Exception(f'priceMul and priceDiv must be of type int')
+        return '0x' + str(toUint(price_mul)) + str(toUint(price_div)) + padded_token[2:]
 
 # TRADING FUNCTIONS
 
-    def newERC223Trade(self, tokenAddress : str, amount, order, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(tokenAddress)
-        token = self.provider.eth.contract(address=tokenAddress, abi=erc223)
-        decimals = token.functions.decimals().call()
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(decimals))
-        payload = "0x" + self.toUint(int(order["order_id"]))
-        exContract = self.provider.toChecksumAddress(order["contract"])
-        
-        if customNonce == None:
+    def newERC223Trade(self, token_address, amount, order, custom_nonce=None):
+        self.verifyOrderTradable(order)
+
+        amount = self.verifyCapacity(amount, order)
+
+        self.log(f"newERC223Trade, amount = {amount}")
+
+        token_address = self.provider.toChecksumAddress(token_address)
+        self.verifyTokenBalance(token_address, amount)
+
+        token = self.provider.eth.contract(address=token_address, abi=ERC223)
+
+        payload = "0x" + toUint(int(order["order_id"]))
+        ex_contract = self.provider.toChecksumAddress(order["contract"])
+
+        if custom_nonce is None:
             nonce = self.provider.eth.getTransactionCount(self.wallet.address)
         else:
-            nonce = customNonce
-            
-        unsignedTX = token.functions.transfer(
-            exContract,
-            int(parsedAmount),
+            nonce = custom_nonce
+
+        unsigned_tx = token.functions.transfer(
+            ex_contract,
+            amount,
             payload
         ).buildTransaction({
             'chainId': self.networkId,
             'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
-            'nonce': nonce  
-        })
-        txhash = self.sendRawTx(unsignedTX)
-        return txhash
-
-    def newERC20Trade(self, tokenAddress : str, amount, order, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(tokenAddress)
-        exContract = self.provider.toChecksumAddress(order["contract"])
-        token = self.provider.eth.contract(address=tokenAddress, abi=erc20)
-        exchange = self.provider.eth.contract(address=exContract, abi = exchangeConfig["abi"])
-        decimals = token.functions.decimals().call()
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(decimals))
-        self.verifyAllowance(token, parsedAmount, exContract)
-
-        if customNonce == None:
-            nonce = self.provider.eth.getTransactionCount(self.wallet.address)
-        else:
-            nonce = customNonce
-
-        unsignedTX = exchange.functions.buyOrderWithERC20Token(
-            int(order["order_id"]),
-            tokenAddress,
-            int(parsedAmount)
-        ).buildTransaction({
-            'chainId': self.networkId,
-            'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
-            'nonce': nonce  
-        })
-        txhash = self.sendRawTx(unsignedTX)
-        return txhash
-
-    def newEtherTrade(self, amount, order, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(order["selltoken"]["address"])
-        exContract = self.provider.toChecksumAddress(order["contract"])
-        token = self.provider.eth.contract(address=tokenAddress, abi=erc20)
-        exchange = self.provider.eth.contract(address=exContract, abi = exchangeConfig["abi"])
-        decimals = token.functions.decimals().call()
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(decimals))
-        requiredEtherAmount = exchange.functions.getBuyTokenAmount(
-            int(parsedAmount),
-            int(order["order_id"])
-        ).call()
-
-        if customNonce == None:
-            nonce = self.provider.eth.getTransactionCount(self.wallet.address)
-        else:
-            nonce = customNonce
-
-        unsignedTX = exchange.functions.buyOrderWithEth(
-            int(order["order_id"])
-        ).buildTransaction({
-            'chainId': self.networkId,
-            'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
-            'nonce': nonce,
-            'value': int(requiredEtherAmount)
-        })
-        txhash = self.sendRawTx(unsignedTX)
-        return txhash
-
-    def newTrade(self, amount, orderTx, customNonce = None):
-        order = self.query.awaitOrderTx(orderTx)        
-        self.verifyOrderTradable(order)
-        orderType = order["type"].lower()
-        if orderType == "sell":
-            self.verifyCapacity(amount, order)
-            self.verifyEtherBalance(amount * float(order["price"]))
-            return self.newEtherTrade(amount, order, customNonce)
-        elif orderType == "buy":
-            tokenAddress = self.provider.toChecksumAddress(order["buytoken"]["address"])
-            tokenType = self.determineTokenType(tokenAddress)
-            self.verifyTokenBalance(tokenAddress, amount)
-            if tokenType == "ERC223":
-                return self.newERC223Trade(tokenAddress, amount, order, customNonce)
-            else:
-                return self.newERC20Trade(tokenAddress, amount, order, customNonce)
-        else:
-            raise Exception("Unknown order type for order_tx {} on ${this.blockchain}".format(orderTx, self.blockchain))
-        #print(order)
-
-    def cancelOrder(self, orderId : int, contract : str = None, customNonce = None):
-        if contract == None:
-            contract = self.exchangeContractAddress
-
-        contractAddr = self.provider.toChecksumAddress(contract)
-        exchange = self.provider.eth.contract(address=contractAddr, abi = exchangeConfig["abi"])
-
-        if customNonce == None:
-            nonce = self.provider.eth.getTransactionCount(self.wallet.address)
-        else:
-            nonce = customNonce
-
-        unsignedTX = exchange.functions.cancelOrder(orderId).buildTransaction({
-            'chainId': self.networkId,
-            'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
+            'gas': gaslimit,
             'nonce': nonce
         })
-        txhash = self.sendRawTx(unsignedTX)
+
+        txhash = self.sendRawTx(unsigned_tx)
+        return txhash
+
+    def newERC20Trade(self, token_address, amount, order, custom_nonce=None):
+        self.verifyOrderTradable(order)
+        amount = self.verifyCapacity(amount, order)
+
+        token_address = self.provider.toChecksumAddress(token_address)
+        self.verifyTokenBalance(token_address, amount)
+
+        ex_contract = self.provider.toChecksumAddress(order["contract"])
+        exchange = self.provider.eth.contract(address=ex_contract, abi=EXCHANGECONFIG["abi"])
+        self.verifyAllowance(token_address, amount, ex_contract)
+
+        if custom_nonce is None:
+            nonce = self.provider.eth.getTransactionCount(self.wallet.address)
+        else:
+            nonce = custom_nonce
+
+        unsigned_tx = exchange.functions.buyOrderWithERC20Token(
+            int(order["order_id"]),
+            token_address,
+            amount
+        ).buildTransaction({
+            'chainId': self.networkId,
+            'gasPrice': self.getGasPrice(),
+            'gas': gaslimit,
+            'nonce': nonce
+        })
+
+        txhash = self.sendRawTx(unsigned_tx)
+        return txhash
+
+    def newEtherTrade(self, amount, order, custom_nonce=None):
+        self.verifyOrderTradable(order)
+
+        amount = self.verifyCapacity(amount, order)
+        self.log(f"newEtherTrade, amount = {amount}")
+
+        ex_contract = self.provider.toChecksumAddress(order["contract"])
+        exchange = self.provider.eth.contract(address=ex_contract, abi=EXCHANGECONFIG["abi"])
+        required_ether_amount = exchange.functions.getBuyTokenAmount(
+            amount, int(order["order_id"])
+        ).call()
+
+        self.log(f"newEtherTrade, requiredEtherAmount = {required_ether_amount}")
+
+        self.verifyEtherBalance(required_ether_amount)
+
+        if custom_nonce is None:
+            nonce = self.provider.eth.getTransactionCount(self.wallet.address)
+        else:
+            nonce = custom_nonce
+
+        unsigned_tx = exchange.functions.buyOrderWithEth(
+            int(order["order_id"])
+        ).buildTransaction({
+            'chainId': self.networkId,
+            'gasPrice': self.getGasPrice(),
+            'gas': gaslimit,
+            'nonce': nonce,
+            'value': required_ether_amount
+        })
+
+        txhash = self.sendRawTx(unsigned_tx)
+        return txhash
+
+    def newTrade(self, amount, orderTx, custom_nonce=None):
+        order = self.query.awaitOrderTx(orderTx)
+        order_type = order["type"].lower()
+        if order_type == "sell":
+            return self.newEtherTrade(amount, order, custom_nonce)
+        elif order_type == "buy":
+            token_address = self.provider.toChecksumAddress(order["buytoken"]["address"])
+            token_type = self.determineTokenType(token_address)
+            if token_type == "ERC223":
+                return self.newERC223Trade(token_address, amount, order, custom_nonce)
+            else:
+                return self.newERC20Trade(token_address, amount, order, custom_nonce)
+        else:
+            raise Exception(f'Unknown order type for order_tx {orderTx} on ${self.blockchain}')
+
+    def cancelOrder(self, order_id: int, contract: str=None, custom_nonce=None) -> str:
+        if contract is None:
+            contract = self.exchange_contract_address
+
+        contract_addr = self.provider.toChecksumAddress(contract)
+        exchange = self.provider.eth.contract(address=contract_addr, abi=EXCHANGECONFIG["abi"])
+
+        if custom_nonce is None:
+            nonce = self.provider.eth.getTransactionCount(self.wallet.address)
+        else:
+            nonce = custom_nonce
+
+        unsigned_tx = exchange.functions.cancelOrder(order_id).buildTransaction({
+            'chainId': self.networkId,
+            'gasPrice': self.getGasPrice(),
+            'gas': gaslimit,
+            'nonce': nonce
+        })
+
+        txhash = self.sendRawTx(unsigned_tx)
         return txhash
 
     def cancelOrderByTxHash(self, txhash : str):
         order = self.query.getOrderByTx(txhash.lower())
-        orderid = int(order["order_id"])
-        cancel_hash = self.cancelOrder(orderid)
-        #print("CANCELING ORDERID {} (ORDERHASH: {}), CANCEL HASH: {}".format(orderid, txhash, cancel_hash))
+        order_id = int(order["order_id"])
+        cancel_hash = self.cancelOrder(order_id)
+        self.log(f'CANCELING ORDERID {order_id} (ORDERHASH: {txhash}), CANCEL HASH: {cancel_hash}')
         wait = self.provider.eth.waitForTransactionReceipt(cancel_hash, timeout=120)
         return wait
 
+    def newOrder(self, token_address, order_type, amount, price, custom_nonce=None):
+        token_address = self.provider.toChecksumAddress(token_address)
 
-    def newOrder(self, tokenAddress: str, orderType: str, amount, price, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(tokenAddress)
-        self.verifyOrderType(orderType.lower())
-        tokenType = self.determineTokenType(tokenAddress)
-        orderContract = self.exchangeContractAddress
-        if orderType == 'buy':
-            self.verifyEtherBalance(amount * price)
-            return self.newBuyOrder(tokenAddress, amount, price, orderContract, customNonce)
-        elif orderType == 'sell':
-            self.verifyTokenBalance(tokenAddress, amount)
-            if tokenType == 'ERC223':
-                return self.newERC223sellOrder(tokenAddress, amount, price, orderContract, customNonce)
-            elif tokenType == 'ERC20':
-                return self.newERC20sellOrder(tokenAddress, amount, price, orderContract, customNonce)
+        self.verifyOrderType(order_type.lower())
+        token_type = self.determineTokenType(token_address)
+        order_contract = self.exchange_contract_address
+
+        if order_type == 'buy':
+            return self.newBuyOrder(token_address, amount, price, order_contract, custom_nonce)
+        elif order_type == 'sell':
+            if token_type == 'ERC223':
+                return self.newERC223sellOrder(
+                    token_address, amount,
+                    price, order_contract,
+                    custom_nonce
+                )
+            elif token_type == 'ERC20':
+                return self.newERC20sellOrder(
+                    token_address, amount,
+                    price, order_contract,
+                    custom_nonce
+                )
             else:
                 raise Exception('UNKNOWN TOKEN STANDARD')
         else:
-            raise Exception('UNKNOWN ORDERTYPE {}', orderType)
+            raise Exception(f'UNKNOWN ORDERTYPE {order_type}')
 
-    def newBuyOrder(self, tokenAddress : str, amount, price : int, orderContract : str, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(tokenAddress)
-        exContract = self.provider.toChecksumAddress(self.exchangeContractAddress)
-        token = self.provider.eth.contract(address=tokenAddress, abi=erc20)
-        exchange = self.provider.eth.contract(address=exContract, abi = exchangeConfig["abi"])
-        decimals = token.functions.decimals().call()
-        parsedPrice = Fraction(price)._mul(Fraction(10).__pow__(self.etherDecimals))._div(
-            Fraction(10).__pow__(decimals)
-        )
-        parsedAmount = Fraction(amount * price)._mul(Fraction(10).__pow__(self.etherDecimals))
-        if customNonce == None:
+    def newBuyOrder(self, token_address, amount, price, order_contract, custom_nonce):
+        amount = Fraction(amount)
+        price = Fraction(price)
+
+        token_address = self.provider.toChecksumAddress(token_address)
+        ex_contract = self.provider.toChecksumAddress(order_contract)
+        exchange = self.provider.eth.contract(address=ex_contract, abi=EXCHANGECONFIG["abi"])
+
+        if not self.SBTKN:
+            token = self.provider.eth.contract(address=token_address, abi=ERC20)
+            exp_decimals = 10 ** int(token.functions.decimals().call())
+            amount = amount * exp_decimals
+            price = price * exp_ether_decimals / exp_decimals
+
+        amount = intVerify(amount, self.STRICT)
+        wei_amount = intVerify(amount * price, self.STRICT)
+
+        if not self.BNDL:
+            if price.denominator != 1:
+                raise Exception(f'Price is a Fraction. Bundle Pricing is not allowed.')
+
+        self.verifyEtherBalance(wei_amount)
+
+        if custom_nonce is None:
             nonce = self.provider.eth.getTransactionCount(self.wallet.address)
         else:
-            nonce = customNonce
+            nonce = custom_nonce
 
-        unsignedTX = exchange.functions.sellEther(
-            tokenAddress,
-            parsedPrice.numerator,
-            parsedPrice.denominator
+        unsigned_tx = exchange.functions.sellEther(
+            token_address,
+            price.numerator,
+            price.denominator
         ).buildTransaction({
             'chainId': self.networkId,
             'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
+            'gas': gaslimit,
             'nonce': nonce,
-            'value': int(parsedAmount)
+            'value': int(wei_amount)
         })
 
-        txhash = self.sendRawTx(unsignedTX)
+        txhash = self.sendRawTx(unsigned_tx)
         return txhash
 
-    def newERC223sellOrder(self, tokenAddress : str, amount, price, orderContract : str, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(tokenAddress)
-        orderContract = self.provider.toChecksumAddress(orderContract)
-        token = self.provider.eth.contract(address=tokenAddress, abi=erc223)
-        decimals = token.functions.decimals().call()
-        
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(decimals))
-        parsedPrice = Fraction(price)._mul(Fraction(10).__pow__(self.etherDecimals))._div(
-            Fraction(10).__pow__(decimals)
-        )
-        parsedPrice = Fraction(1)._div(parsedPrice)
-        payload = self.createERC223OrderPayload(parsedPrice, self.etheraddress)
-        #print('PARSED AMOUNT', int(parsedAmount))
-        if customNonce == None:
+    def newERC223sellOrder(self, token_address, amount, price, order_contract, custom_nonce=None):
+        amount = Fraction(amount)
+        price = Fraction(price)
+
+        token_address = self.provider.toChecksumAddress(token_address)
+        order_contract = self.provider.toChecksumAddress(order_contract)
+        token = self.provider.eth.contract(address=token_address, abi=ERC223)
+
+        if not self.SBTKN:
+            exp_decimals = 10 ** int(token.functions.decimals().call())
+            amount = toSbtkn(amount, exp_decimals, self.STRICT)
+            price = price * exp_ether_decimals / exp_decimals
+
+        amount = intVerify(amount, self.STRICT)
+        intVerify(amount * price, self.STRICT)
+
+        if not self.BNDL:
+            if price.denominator != 1:
+                raise Exception(f'Price is a Fraction. Bundle Pricing is not allowed.')
+
+        self.verifyTokenBalance(token_address, amount)
+
+        if custom_nonce is None:
             nonce = self.provider.eth.getTransactionCount(self.wallet.address)
         else:
-            nonce = customNonce
+            nonce = custom_nonce
 
-        unsignedTX = token.functions.transfer(
-            orderContract,
-            int(parsedAmount),
+        payload = self.createERC223OrderPayload(price.denominator, price.numerator, etheraddress)
+
+        unsigned_tx = token.functions.transfer(
+            order_contract,
+            amount,
             payload
         ).buildTransaction({
             'chainId': self.networkId,
             'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
+            'gas': gaslimit,
             'nonce': nonce
         })
 
-        txhash = self.sendRawTx(unsignedTX)
+        txhash = self.sendRawTx(unsigned_tx)
         return txhash
 
-    def newERC20sellOrder(self, tokenAddress : str, amount, price : int, orderContract : str, customNonce = None):
-        tokenAddress = self.provider.toChecksumAddress(tokenAddress)
-        orderContract = self.provider.toChecksumAddress(orderContract)        
-        exchange = self.provider.eth.contract(address=orderContract, abi = exchangeConfig["abi"])
-        token = self.provider.eth.contract(address=tokenAddress, abi=erc20)
-        decimals = token.functions.decimals().call()
-        parsedAmount = Fraction(amount)._mul(Fraction(10).__pow__(decimals))
-        parsedPrice = Fraction(price)._mul(Fraction(10).__pow__(self.etherDecimals))._div(
-            Fraction(10).__pow__(decimals)
-        )
-        parsedPrice = Fraction(1)._div(parsedPrice)
-        self.verifyAllowance(token, parsedAmount, orderContract)
+    def newERC20sellOrder(self, token_address, amount, price, order_contract, custom_nonce=None):
+        amount = Fraction(amount)
+        price = Fraction(price)
 
-        if customNonce == None:
+        token_address = self.provider.toChecksumAddress(token_address)
+        order_contract = self.provider.toChecksumAddress(order_contract)
+        token = self.provider.eth.contract(address=token_address, abi=ERC20)
+
+        if not self.SBTKN:
+            exp_decimals = 10 ** int(token.functions.decimals().call())
+            amount = toSbtkn(amount, exp_decimals, self.STRICT)
+            price = price * exp_ether_decimals / exp_decimals
+
+        amount = intVerify(amount, self.STRICT)
+        intVerify(amount * price, self.STRICT)
+
+        if not self.BNDL:
+            if price.denominator != 1:
+                raise Exception(f'Price is a Fraction. Bundle Pricing is not allowed.')
+
+        self.verifyTokenBalance(token_address, amount)
+
+        if custom_nonce is None:
             nonce = self.provider.eth.getTransactionCount(self.wallet.address)
         else:
-            nonce = customNonce
+            nonce = custom_nonce
 
-        unsignedTX = exchange.functions.sellERC20Token(
-            tokenAddress,
-            self.etheraddress,
-            int(parsedAmount),
-            int(parsedPrice.numerator),
-            int(parsedPrice.denominator)
+        self.verifyAllowance(token_address, amount, order_contract)
+
+        exchange = self.provider.eth.contract(address=order_contract, abi=EXCHANGECONFIG["abi"])
+
+        unsigned_tx = exchange.functions.sellERC20Token(
+            token_address,
+            etheraddress,
+            amount,
+            price.denominator,
+            price.numerator
         ).buildTransaction({
             'chainId': self.networkId,
             'gasPrice': self.getGasPrice(),
-            'gas': self.gaslimit,
+            'gas': gaslimit,
             'nonce': nonce
         })
-        txhash = self.sendRawTx(unsignedTX)
+
+        txhash = self.sendRawTx(unsigned_tx)
         return txhash
