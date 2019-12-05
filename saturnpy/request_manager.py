@@ -1,9 +1,9 @@
-import requests, json
+from statistics import mean
+import requests
 import pandas as pd
-from statistics import mean 
+from .utils import etheraddress
 
 class RequestManager():
-    etheraddress = "0x0000000000000000000000000000000000000000"
     payload = {'Origin': 'saturnpy'}
     def __init__(self, apiurl, provider, wallet, blockchain):
         self.apiurl = apiurl
@@ -11,40 +11,40 @@ class RequestManager():
         self.wallet = wallet
         self.blockchain = blockchain
 
-    def getTransaction(self, tx : str):
-        url = "{}transactions/{}/{}.json".format(str(self.apiurl), str(self.blockchain),str(tx))
+    def getTransaction(self, tx: str):
+        url = f"{self.apiurl}transactions/{self.blockchain}/{tx}.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
 
-    def getOrderByTx(self, tx : str):
-        url = "{}orders/by_tx/{}/{}.json".format(str(self.apiurl), str(self.blockchain),str(tx))
+    def getOrderByTx(self, tx: str):
+        url = f"{self.apiurl}orders/by_tx/{self.blockchain}/{tx}.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
-    
+
     def awaitOrderTx(self, tx):
         try:
             self.provider.eth.waitForTransactionReceipt(tx, timeout=120)
         except:
             errmessage = 'ERROR AWAITING ORDER RECEIPT'
-            raise Exception('ERROR\n{}\n{}'.format(errmessage, tx))
+            raise Exception(f"ERROR\n{errmessage}\n{tx}")
         finally:
             order = self.getOrderByTx(tx)
             return order
 
-    def getTradeByTx(self, tx : str):
-        url = "{}trades/by_tx/{}/{}.json".format(str(self.apiurl), str(self.blockchain),str(tx))
+    def getTradeByTx(self, tx: str):
+        url = f"{self.apiurl}trades/by_tx/{self.blockchain}/{tx}.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
 
@@ -53,39 +53,39 @@ class RequestManager():
             self.provider.eth.waitForTransactionReceipt(tx, timeout=120)
         except:
             errmessage = 'ERROR AWAITING TRADE RECEIPT'
-            raise Exception('ERROR\n{}\n{}'.format(errmessage, tx))
+            raise Exception(f"ERROR\n{errmessage}\n{tx}")
         finally:
             trade = self.getTradeByTx(tx)
             return trade
 
-    def getTokenInfo(self, address : str):
-        url = "{}tokens/show/{}/{}.json".format(str(self.apiurl), str(self.blockchain),str(address).lower())
+    def getTokenInfo(self, address: str):
+        url = f"{self.apiurl}tokens/show/{self.blockchain}/{address.lower()}.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
 
-    def getExchangeContract(self, blockchain = None):
-        if blockchain == None:
+    def getExchangeContract(self, blockchain=None):
+        if blockchain is None:
             blockchain = self.blockchain
-        url = "{}orders/contracts.json".format(str(self.apiurl))
+        url = f"{self.apiurl}orders/contracts.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             data = data.json()
             result = data[blockchain.upper()]
             return result
 
-    def ordersForAddress(self, address : str):
-        url = "{}orders/trader/{}.json".format(str(self.apiurl), str(address).lower())
+    def ordersForAddress(self, address: str):
+        url = f"{self.apiurl}orders/trader/{address.lower()}.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             data = data.json()
             sell_orders = pd.Series(data["sell_orders"])
@@ -93,54 +93,54 @@ class RequestManager():
 
             return pd.concat([sell_orders, buy_orders], ignore_index=True)
 
-    def orderbook(self, token : str):
-        url = "{}orders/{}/{}/{}/all.json".format(str(self.apiurl), str(self.blockchain),str(token).lower(), str(self.etheraddress))
+    def orderbook(self, token: str):
+        url = f"{self.apiurl}orders/{self.blockchain}/{token.lower()}/{str(etheraddress)}/all.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
 
-    def ohlcv(self, token : str):
-        url = "{}tokens/ohlcv/{}/{}/24h.json".format(str(self.apiurl), str(self.blockchain),str(token).lower())
+    def ohlcv(self, token: str):
+        url = f"{self.apiurl}tokens/ohlcv/{self.blockchain}/{token.lower()}/24h.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
 
-    def getRSI(self, token : str, periods : int = 14, ohlcvdata = None):
-        if ohlcvdata == None:
+    def getRSI(self, token: str, periods: int = 14, ohlcvdata=None):
+        if ohlcvdata is None:
             ohlcvdata = self.ohlcv(token.lower())
         data = ohlcvdata[-periods:]
-        avgOpen = []
-        avgClose = []
+        avg_open = []
+        avg_close = []
 
         for x in data:
-            avgOpen.append(float(x["open"]))
-            avgClose.append(float(x["close"]))
+            avg_open.append(float(x["open"]))
+            avg_close.append(float(x["close"]))
 
-        avgOpen = mean(avgOpen)
-        avgClose = mean(avgClose)
+        avg_open = mean(avg_open)
+        avg_close = mean(avg_close)
 
-        RS = avgClose / avgOpen
-        RSI = 100 - ( 1 / (1 + RS) )
+        rs = avg_close / avg_open
+        rsi = 100 - ( 1 / (1 + rs) )
 
         out = {
-            "RSI": RSI,
-            "avgOpen": avgOpen,
-            "avgClose": avgClose,
+            "RSI": rsi,
+            "avgOpen": avg_open,
+            "avgClose": avg_close,
             "periods": periods
         }
         return out
 
-    def tradeHistory(self, token : str):
-        url = "{}trades/{}/{}/{}/all.json".format(str(self.apiurl), str(self.blockchain),str(token).lower(),str(self.etheraddress).lower())
+    def tradeHistory(self, token: str):
+        url = f"{self.apiurl}trades/{self.blockchain}/{token.lower()}/{etheraddress.lower()}/all.json"
         try:
             data = requests.get(url, params=self.payload)
         except:
-            raise Exception('ERROR GET URL: {}'.format(url))
+            raise Exception(f"ERROR GET URL: {url}")
         finally:
             return data.json()
