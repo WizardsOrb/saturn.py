@@ -81,7 +81,7 @@ typing-extensions==3.7.4.1
 urllib3==1.25.7
 varint==1.0.2
 wcwidth==0.1.7
-web3==5.0.0b5
+web3==5.0.0
 websockets==8.1
 wrapt==1.11.2
 zipp==0.6.0
