@@ -27,7 +27,12 @@ The following flag values default to False, to allow the simplest and best tradi
 * ecdsa
 
 ### Install
-* `pip3 install web3, eth_account, ethereum, pandas, base58, ecdsa`
+* `pip3 install -r requirements.txt`
+
+
+### Note!!
+* Newer versions of web3.py (> 5.0.0b5) will run into an error -> `TypeError: 'cytoolz.functoolz.curry' object is not subscriptable`
+feel free to fix it.
 
 ### Sample Usage
 > NOTE: The biggest difference to saturn.js is, that you have to create seperate instances if you want to use ETH and ETC!
