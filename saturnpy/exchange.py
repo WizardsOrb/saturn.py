@@ -135,7 +135,7 @@ class ExchangeInterface(object):
 
     def verifyCapacity(self, amount, order):
         order_id = int(order["order_id"])
-        order_contract = self.exchange_contract_address
+        order_contract = self.provider.toChecksumAddress(order["contract"]) # self.exchange_contract_address  #
         token_addr = ""
         if order["buytoken"]["address"] != etheraddress:
             token_addr = order["buytoken"]["address"]
@@ -158,9 +158,9 @@ class ExchangeInterface(object):
         order_balance = int(exchange.functions.remainingAmount(order_id).call())
 
         if order["type"] == "BUY":
-            nearest_trade = min(amount - amount * price_mul % price_div, order_balance * price_div // price_mul)
+            nearest_trade = min(amount - amount % price_div, order_balance * price_div // price_mul)
         elif order["type"] == "SELL":
-            nearest_trade = min(amount - amount * price_div % price_mul, order_balance)
+            nearest_trade = min(amount - amount % price_mul, order_balance)
         else:
             raise Exception(f'Unknown order type for order_tx {order["transaction"]} on ${self.blockchain}')
 

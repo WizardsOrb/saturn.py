@@ -31,7 +31,7 @@ idna==2.8
 importlib-metadata==0.23
 ipfshttpclient==0.4.12
 isort==4.3.21
-jsonschema==3.2.0
+jsonschema==2.6.0
 Kivy==1.11.1
 Kivy-Garden==0.1.4
 lazy-object-proxy==1.4.3
@@ -82,6 +82,6 @@ urllib3==1.25.7
 varint==1.0.2
 wcwidth==0.1.7
 web3==5.0.0
-websockets==8.1
+websockets==7.0
 wrapt==1.11.2
 zipp==0.6.0
